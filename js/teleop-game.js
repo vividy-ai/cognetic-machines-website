@@ -8,14 +8,14 @@ class TeleopGame {
         this.width = this.canvas.width;
         this.height = this.canvas.height;
 
-        // Robot arm - mounted on right side, reaching left
+        // Robot arm - mounted in center, can reach both sides
         this.robot = {
-            baseX: this.width - 120,
-            baseY: 180,
-            arm1Length: 120,
-            arm2Length: 100,
-            angle1: Math.PI * 0.7,  // shoulder angle
-            angle2: -Math.PI * 0.3  // elbow angle (relative)
+            baseX: this.width / 2,
+            baseY: 120,
+            arm1Length: 130,
+            arm2Length: 120,
+            angle1: Math.PI * 0.6,  // shoulder angle
+            angle2: -Math.PI * 0.4  // elbow angle (relative)
         };
 
         // Gripper state
@@ -24,17 +24,17 @@ class TeleopGame {
 
         // Package on conveyor (left side)
         this.package = {
-            x: 80,
-            y: this.height - 80,
+            x: 120,
+            y: this.height - 100,
             width: 50,
             height: 40,
             grabbed: false
         };
 
-        // Drop zone (center-right)
+        // Drop zone (right side)
         this.dropZone = {
-            x: this.width - 250,
-            y: this.height - 70,
+            x: this.width - 180,
+            y: this.height - 90,
             width: 80,
             height: 50
         };
@@ -135,7 +135,7 @@ class TeleopGame {
 
             // Reset package position
             setTimeout(() => {
-                this.package.x = 60 + Math.random() * 40;
+                this.package.x = 100 + Math.random() * 60;
                 this.message = "Move to the package and click to grab";
             }, 1000);
         }
@@ -201,25 +201,25 @@ class TeleopGame {
 
         // Conveyor frame
         ctx.fillStyle = '#444';
-        ctx.fillRect(20, y - 35, 150, 10);
+        ctx.fillRect(60, y - 55, 150, 10);
 
         // Legs
         ctx.fillStyle = '#333';
-        ctx.fillRect(30, y - 25, 8, 25);
-        ctx.fillRect(152, y - 25, 8, 25);
+        ctx.fillRect(70, y - 45, 8, 45);
+        ctx.fillRect(192, y - 45, 8, 45);
 
         // Rollers
         ctx.fillStyle = '#555';
-        for (let x = 45; x < 160; x += 25) {
+        for (let x = 85; x < 200; x += 25) {
             ctx.beginPath();
-            ctx.arc(x, y - 30, 4, 0, Math.PI * 2);
+            ctx.arc(x, y - 50, 4, 0, Math.PI * 2);
             ctx.fill();
         }
 
         // Label
         ctx.fillStyle = '#666';
         ctx.font = '10px sans-serif';
-        ctx.fillText('CONVEYOR', 55, y - 42);
+        ctx.fillText('CONVEYOR', 100, y - 62);
     }
 
     drawDropZone() {
@@ -282,13 +282,21 @@ class TeleopGame {
         const robot = this.robot;
         const { elbow, wrist } = this.getGripperPos();
 
-        // Base pillar
+        // Ceiling rail
         ctx.fillStyle = '#444';
-        ctx.fillRect(robot.baseX - 15, robot.baseY, 30, this.height - robot.baseY - 50);
+        ctx.fillRect(50, 0, this.width - 100, 15);
 
-        // Base plate
+        // Rail details
         ctx.fillStyle = '#555';
-        ctx.fillRect(robot.baseX - 30, this.height - 52, 60, 8);
+        ctx.fillRect(50, 12, this.width - 100, 3);
+
+        // Vertical mount from ceiling
+        ctx.fillStyle = '#444';
+        ctx.fillRect(robot.baseX - 12, 0, 24, robot.baseY - 20);
+
+        // Mount connector
+        ctx.fillStyle = '#555';
+        ctx.fillRect(robot.baseX - 18, robot.baseY - 25, 36, 10);
 
         // Shoulder mount
         ctx.fillStyle = '#333';
