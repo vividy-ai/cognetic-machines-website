@@ -91,28 +91,47 @@ function initFAQ() {
 // Contact Form
 function initContactForm() {
     const form = document.getElementById('contactForm');
+    const API_ENDPOINT = 'https://3m6ugn351m.execute-api.us-east-2.amazonaws.com/contact';
 
     if (form) {
-        form.addEventListener('submit', (e) => {
+        form.addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            // Get form data
-            const formData = new FormData(form);
-            const data = Object.fromEntries(formData);
-
-            // Here you would typically send the data to a server
-            console.log('Form submitted:', data);
-
-            // Show success message
             const btn = form.querySelector('button[type="submit"]');
             const originalText = btn.textContent;
-            btn.textContent = 'Message Sent!';
+            btn.textContent = 'Sending...';
             btn.disabled = true;
+
+            // Get form data
+            const inputs = form.querySelectorAll('input, textarea');
+            const data = {
+                name: inputs[0].value,
+                email: inputs[1].value,
+                company: inputs[2].value,
+                message: inputs[3].value
+            };
+
+            try {
+                const response = await fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.ok) {
+                    btn.textContent = 'Message Sent!';
+                    form.reset();
+                } else {
+                    btn.textContent = 'Error - Try Again';
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                btn.textContent = 'Error - Try Again';
+            }
 
             setTimeout(() => {
                 btn.textContent = originalText;
                 btn.disabled = false;
-                form.reset();
             }, 3000);
         });
     }
