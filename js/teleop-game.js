@@ -1,421 +1,417 @@
-// Teleoperation Pick & Place Game
-class TeleopGame {
+// 3D Teleoperation Pick & Place Game using Three.js
+class TeleopGame3D {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         if (!this.canvas) return;
 
-        this.ctx = this.canvas.getContext('2d');
-        this.width = this.canvas.width;
-        this.height = this.canvas.height;
-
-        // Robot arm - mounted in center, can reach both sides
-        this.robot = {
-            baseX: this.width / 2,
-            baseY: 120,
-            arm1Length: 130,
-            arm2Length: 120,
-            angle1: Math.PI * 0.6,  // shoulder angle
-            angle2: -Math.PI * 0.4  // elbow angle (relative)
-        };
-
-        // Gripper state
-        this.gripperOpen = true;
-        this.holdingPackage = false;
-
-        // Package on conveyor (left side)
-        this.package = {
-            x: 120,
-            y: this.height - 100,
-            width: 50,
-            height: 40,
-            grabbed: false
-        };
-
-        // Drop zone (right side)
-        this.dropZone = {
-            x: this.width - 180,
-            y: this.height - 90,
-            width: 80,
-            height: 50
-        };
-
-        // Mouse position
-        this.mouseX = this.width / 2;
-        this.mouseY = this.height / 2;
+        // Replace canvas with a container div
+        this.container = document.createElement('div');
+        this.container.style.width = '700px';
+        this.container.style.height = '400px';
+        this.container.style.position = 'relative';
+        this.container.style.borderRadius = '12px';
+        this.container.style.overflow = 'hidden';
+        this.canvas.parentNode.replaceChild(this.container, this.canvas);
 
         // Game state
+        this.holdingPackage = false;
         this.score = 0;
         this.packagesDelivered = 0;
-        this.message = "Move to the package and click to grab";
+        this.message = "Move mouse to control arm. Click to grab/drop.";
 
-        // Bind events
-        this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        this.canvas.addEventListener('click', () => this.onClick());
+        // Target position for IK
+        this.targetX = 0;
+        this.targetZ = -2;
 
-        // Start animation
+        // Initialize Three.js
+        this.initThree();
+        this.createScene();
+        this.createRobot();
+        this.createUI();
+        this.bindEvents();
         this.animate();
     }
 
+    initThree() {
+        // Scene
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x1a1a1a);
+
+        // Camera - zoomed in
+        this.camera = new THREE.PerspectiveCamera(45, 700 / 400, 0.1, 1000);
+        this.camera.position.set(0, 3.5, 5);
+        this.camera.lookAt(0, 1.2, 0);
+
+        // Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(700, 400);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.container.appendChild(this.renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        this.scene.add(ambientLight);
+
+        const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        mainLight.position.set(5, 10, 5);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 1024;
+        mainLight.shadow.mapSize.height = 1024;
+        mainLight.shadow.camera.near = 0.5;
+        mainLight.shadow.camera.far = 50;
+        mainLight.shadow.camera.left = -10;
+        mainLight.shadow.camera.right = 10;
+        mainLight.shadow.camera.top = 10;
+        mainLight.shadow.camera.bottom = -10;
+        this.scene.add(mainLight);
+
+        const fillLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+        fillLight.position.set(-5, 5, -5);
+        this.scene.add(fillLight);
+    }
+
+    createScene() {
+        // Floor
+        const floorGeom = new THREE.PlaneGeometry(20, 20);
+        const floorMat = new THREE.MeshStandardMaterial({
+            color: 0x252525,
+            roughness: 0.8
+        });
+        this.floor = new THREE.Mesh(floorGeom, floorMat);
+        this.floor.rotation.x = -Math.PI / 2;
+        this.floor.receiveShadow = true;
+        this.scene.add(this.floor);
+
+        // Grid
+        const gridHelper = new THREE.GridHelper(20, 20, 0x333333, 0x2a2a2a);
+        this.scene.add(gridHelper);
+
+        // One long table for everything
+        this.createWorkbench();
+
+        // Drop zone indicator
+        const dropZoneGeom = new THREE.BoxGeometry(0.9, 0.05, 0.9);
+        const dropZoneMat = new THREE.MeshStandardMaterial({
+            color: 0xf97316,
+            transparent: true,
+            opacity: 0.3
+        });
+        this.dropZone = new THREE.Mesh(dropZoneGeom, dropZoneMat);
+        this.dropZone.position.set(-1.3, 1.08, 0);
+        this.scene.add(this.dropZone);
+
+        // Drop zone border
+        const dropBorderGeom = new THREE.EdgesGeometry(new THREE.BoxGeometry(0.9, 0.1, 0.9));
+        const dropBorderMat = new THREE.LineBasicMaterial({ color: 0xf97316 });
+        const dropBorder = new THREE.LineSegments(dropBorderGeom, dropBorderMat);
+        dropBorder.position.copy(this.dropZone.position);
+        this.scene.add(dropBorder);
+        this.dropBorder = dropBorder;
+
+        // Package
+        this.createPackage();
+    }
+
+    createWorkbench() {
+        const tableGroup = new THREE.Group();
+
+        // Long table top
+        const topGeom = new THREE.BoxGeometry(5, 0.12, 1.8);
+        const topMat = new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.6 });
+        const top = new THREE.Mesh(topGeom, topMat);
+        top.position.y = 1;
+        top.castShadow = true;
+        top.receiveShadow = true;
+        tableGroup.add(top);
+
+        // Table edge trim
+        const trimGeom = new THREE.BoxGeometry(5.05, 0.04, 1.85);
+        const trimMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+        const trim = new THREE.Mesh(trimGeom, trimMat);
+        trim.position.y = 1.06;
+        tableGroup.add(trim);
+
+        // Legs
+        const legGeom = new THREE.BoxGeometry(0.12, 1, 0.12);
+        const legMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a });
+        const legPositions = [
+            [-2.3, 0.5, -0.75],
+            [2.3, 0.5, -0.75],
+            [-2.3, 0.5, 0.75],
+            [2.3, 0.5, 0.75],
+            [0, 0.5, -0.75],
+            [0, 0.5, 0.75]
+        ];
+        legPositions.forEach(pos => {
+            const leg = new THREE.Mesh(legGeom, legMat);
+            leg.position.set(...pos);
+            leg.castShadow = true;
+            tableGroup.add(leg);
+        });
+
+        this.scene.add(tableGroup);
+    }
+
+    createPackage() {
+        const boxGeom = new THREE.BoxGeometry(0.5, 0.4, 0.5);
+        const boxMat = new THREE.MeshStandardMaterial({
+            color: 0xc9956a,
+            roughness: 0.6
+        });
+        this.package = new THREE.Mesh(boxGeom, boxMat);
+        this.package.position.set(1.3, 1.28, 0);
+        this.package.castShadow = true;
+        this.scene.add(this.package);
+
+        // Tape stripes
+        const tapeGeom = new THREE.BoxGeometry(0.52, 0.06, 0.52);
+        const tapeMat = new THREE.MeshStandardMaterial({ color: 0x8b6914 });
+        const tape = new THREE.Mesh(tapeGeom, tapeMat);
+        tape.position.y = 0.08;
+        this.package.add(tape);
+    }
+
+    createRobot() {
+        this.robotGroup = new THREE.Group();
+
+        // Materials
+        const darkMetal = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.4, metalness: 0.6 });
+        const lightMetal = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.4, metalness: 0.6 });
+        const accentMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.3, metalness: 0.8 });
+
+        // Base - sits on table
+        const baseGeom = new THREE.CylinderGeometry(0.3, 0.35, 0.15, 32);
+        this.base = new THREE.Mesh(baseGeom, darkMetal);
+        this.base.position.y = 1.15;
+        this.base.castShadow = true;
+        this.robotGroup.add(this.base);
+
+        // Turret (rotates)
+        const turretGeom = new THREE.CylinderGeometry(0.22, 0.25, 0.18, 32);
+        this.turret = new THREE.Mesh(turretGeom, lightMetal);
+        this.turret.position.y = 0.12;
+        this.turret.castShadow = true;
+        this.base.add(this.turret);
+
+        // Shoulder joint
+        const shoulderGeom = new THREE.SphereGeometry(0.14, 16, 16);
+        this.shoulder = new THREE.Mesh(shoulderGeom, accentMat);
+        this.shoulder.position.y = 0.12;
+        this.turret.add(this.shoulder);
+
+        // Upper arm
+        const upperArmGeom = new THREE.BoxGeometry(0.1, 0.8, 0.1);
+        this.upperArm = new THREE.Mesh(upperArmGeom, lightMetal);
+        this.upperArm.position.y = 0.4;
+        this.upperArm.castShadow = true;
+        this.shoulder.add(this.upperArm);
+
+        // Elbow joint
+        const elbowGeom = new THREE.SphereGeometry(0.1, 16, 16);
+        this.elbow = new THREE.Mesh(elbowGeom, accentMat);
+        this.elbow.position.y = 0.4;
+        this.upperArm.add(this.elbow);
+
+        // Forearm
+        const forearmGeom = new THREE.BoxGeometry(0.08, 0.7, 0.08);
+        this.forearm = new THREE.Mesh(forearmGeom, lightMetal);
+        this.forearm.position.y = 0.35;
+        this.forearm.castShadow = true;
+        this.elbow.add(this.forearm);
+
+        // Wrist
+        const wristGeom = new THREE.SphereGeometry(0.07, 16, 16);
+        this.wrist = new THREE.Mesh(wristGeom, accentMat);
+        this.wrist.position.y = 0.35;
+        this.forearm.add(this.wrist);
+
+        // Gripper base
+        const gripBaseGeom = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        this.gripperBase = new THREE.Mesh(gripBaseGeom, darkMetal);
+        this.gripperBase.position.y = -0.08;
+        this.wrist.add(this.gripperBase);
+
+        // Gripper fingers
+        const fingerGeom = new THREE.BoxGeometry(0.03, 0.15, 0.06);
+        const fingerMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.3, metalness: 0.7 });
+
+        this.leftFinger = new THREE.Mesh(fingerGeom, fingerMat);
+        this.leftFinger.position.set(-0.04, -0.1, 0);
+        this.gripperBase.add(this.leftFinger);
+
+        this.rightFinger = new THREE.Mesh(fingerGeom, fingerMat);
+        this.rightFinger.position.set(0.04, -0.1, 0);
+        this.gripperBase.add(this.rightFinger);
+
+        this.robotGroup.position.set(0, 0, 0);
+        this.scene.add(this.robotGroup);
+    }
+
+    createUI() {
+        // UI Overlay
+        this.uiDiv = document.createElement('div');
+        this.uiDiv.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            font-family: 'Instrument Sans', sans-serif;
+        `;
+
+        this.messageSpan = document.createElement('span');
+        this.messageSpan.style.cssText = 'color: #888; font-size: 14px;';
+        this.messageSpan.textContent = this.message;
+
+        this.scoreSpan = document.createElement('span');
+        this.scoreSpan.style.cssText = 'color: #f97316; font-size: 14px; font-weight: bold;';
+
+        this.uiDiv.appendChild(this.messageSpan);
+        this.uiDiv.appendChild(this.scoreSpan);
+        this.container.appendChild(this.uiDiv);
+    }
+
+    bindEvents() {
+        this.container.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        this.container.addEventListener('click', () => this.onClick());
+    }
+
     onMouseMove(e) {
-        const rect = this.canvas.getBoundingClientRect();
-        this.mouseX = (e.clientX - rect.left) * (this.canvas.width / rect.width);
-        this.mouseY = (e.clientY - rect.top) * (this.canvas.height / rect.height);
-        this.solveIK();
+        const rect = this.container.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        const y = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+
+        // Map mouse to target position on the table (x is direct, not inverted)
+        this.targetX = -x * 2.5;  // Flip X so left mouse = left arm
+        this.targetZ = y * 0.8;   // Flip Z for correct depth
+
+        this.updateRobot();
     }
 
-    solveIK() {
-        const robot = this.robot;
-        const targetX = this.mouseX;
-        const targetY = this.mouseY;
+    updateRobot() {
+        // Calculate angle to target (turret rotation)
+        const angle = Math.atan2(this.targetX, -this.targetZ);
+        this.turret.rotation.y = angle;
 
-        // Vector from base to target
-        const dx = targetX - robot.baseX;
-        const dy = targetY - robot.baseY;
-        let dist = Math.sqrt(dx * dx + dy * dy);
+        // Distance to target (for arm reach)
+        const dist = Math.sqrt(this.targetX * this.targetX + this.targetZ * this.targetZ);
+        const clampedDist = Math.max(0.3, Math.min(2.2, dist));
 
-        // Clamp to reachable distance
-        const maxReach = robot.arm1Length + robot.arm2Length - 10;
-        const minReach = Math.abs(robot.arm1Length - robot.arm2Length) + 20;
-        dist = Math.max(minReach, Math.min(maxReach, dist));
+        // Simple IK for 2-joint arm - longer reach
+        const L1 = 0.8; // upper arm
+        const L2 = 0.7; // forearm
+        const targetY = 1.25; // height to reach (table surface + package)
+        const baseY = 1.5; // shoulder height (on table)
 
-        // Law of cosines for elbow angle
-        const cosAngle2 = (dist * dist - robot.arm1Length * robot.arm1Length - robot.arm2Length * robot.arm2Length)
-                         / (2 * robot.arm1Length * robot.arm2Length);
-        robot.angle2 = -Math.acos(Math.max(-1, Math.min(1, cosAngle2)));
+        const dy = targetY - baseY;
+        const dxz = clampedDist;
+        const d = Math.sqrt(dy * dy + dxz * dxz);
 
-        // Shoulder angle
-        const angleToTarget = Math.atan2(dy, dx);
-        const k1 = robot.arm1Length + robot.arm2Length * Math.cos(robot.angle2);
-        const k2 = robot.arm2Length * Math.sin(robot.angle2);
-        robot.angle1 = angleToTarget - Math.atan2(k2, k1);
-    }
+        // Clamp to reachable
+        const reachMax = L1 + L2 - 0.05;
+        const reachMin = Math.abs(L1 - L2) + 0.05;
+        const reach = Math.max(reachMin, Math.min(reachMax, d));
 
-    getGripperPos() {
-        const robot = this.robot;
-        const elbow = {
-            x: robot.baseX + Math.cos(robot.angle1) * robot.arm1Length,
-            y: robot.baseY + Math.sin(robot.angle1) * robot.arm1Length
-        };
-        const wrist = {
-            x: elbow.x + Math.cos(robot.angle1 + robot.angle2) * robot.arm2Length,
-            y: elbow.y + Math.sin(robot.angle1 + robot.angle2) * robot.arm2Length
-        };
-        return { elbow, wrist };
+        // Law of cosines
+        const cosAngle2 = (reach * reach - L1 * L1 - L2 * L2) / (2 * L1 * L2);
+        const angle2 = Math.acos(Math.max(-1, Math.min(1, cosAngle2)));
+
+        const angleToTarget = Math.atan2(dy, dxz);
+        const k1 = L1 + L2 * Math.cos(angle2);
+        const k2 = L2 * Math.sin(angle2);
+        const angle1 = angleToTarget + Math.atan2(k2, k1);
+
+        // Apply to arm (rotations in local space)
+        this.shoulder.rotation.x = -(Math.PI / 2 - angle1);
+        this.elbow.rotation.x = -(Math.PI - angle2);
+
+        // Keep gripper pointing down
+        this.wrist.rotation.x = -this.shoulder.rotation.x - this.elbow.rotation.x;
+
+        // Update package position if holding
+        if (this.holdingPackage) {
+            const worldPos = new THREE.Vector3();
+            this.gripperBase.getWorldPosition(worldPos);
+            this.package.position.set(worldPos.x, worldPos.y - 0.28, worldPos.z);
+        }
     }
 
     onClick() {
-        const { wrist } = this.getGripperPos();
-        const pkg = this.package;
-        const drop = this.dropZone;
+        const gripperPos = new THREE.Vector3();
+        this.gripperBase.getWorldPosition(gripperPos);
 
         if (!this.holdingPackage) {
-            // Try to grab package
-            const overPackage = wrist.x > pkg.x - 15 && wrist.x < pkg.x + pkg.width + 15 &&
-                               wrist.y > pkg.y - 20 && wrist.y < pkg.y + pkg.height + 15;
-            if (overPackage) {
+            // Try to grab
+            const distToPackage = gripperPos.distanceTo(this.package.position);
+            if (distToPackage < 0.6) {
                 this.holdingPackage = true;
-                this.gripperOpen = false;
-                this.message = "Now move to the drop zone and click!";
+                this.closeGripper();
+                this.message = "Now move to the DROP zone and click!";
             }
         } else {
             // Try to drop
-            const overDrop = wrist.x > drop.x - 15 && wrist.x < drop.x + drop.width + 15 &&
-                            wrist.y > drop.y - 20 && wrist.y < drop.y + drop.height + 15;
+            const dropPos = new THREE.Vector3(-1.3, 1.28, 0);
+            const distToDrop = new THREE.Vector2(gripperPos.x - dropPos.x, gripperPos.z - dropPos.z).length();
 
             this.holdingPackage = false;
-            this.gripperOpen = true;
+            this.openGripper();
 
-            if (overDrop) {
+            if (distToDrop < 0.6) {
                 this.packagesDelivered++;
                 this.score += 100;
                 this.message = "Nice! +100 points";
+                this.package.position.set(-1.3, 1.28, 0);
             } else {
                 this.message = "Missed! Try again";
             }
 
-            // Reset package position
+            // Reset package after delay
             setTimeout(() => {
-                this.package.x = 100 + Math.random() * 60;
-                this.message = "Move to the package and click to grab";
-            }, 1000);
+                this.package.position.set(1.3 + (Math.random() - 0.5) * 0.2, 1.28, (Math.random() - 0.5) * 0.2);
+                this.message = "Move mouse to control arm. Click to grab/drop.";
+            }, 1500);
         }
     }
 
-    draw() {
-        const ctx = this.ctx;
-
-        // Background
-        ctx.fillStyle = '#1a1a1a';
-        ctx.fillRect(0, 0, this.width, this.height);
-
-        // Grid lines for depth
-        ctx.strokeStyle = '#2a2a2a';
-        ctx.lineWidth = 1;
-        for (let y = 50; y < this.height; y += 40) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(this.width, y);
-            ctx.stroke();
-        }
-
-        // Floor
-        ctx.fillStyle = '#252525';
-        ctx.fillRect(0, this.height - 50, this.width, 50);
-
-        // Conveyor belt (left side)
-        this.drawConveyor();
-
-        // Drop zone
-        this.drawDropZone();
-
-        // Package (either on conveyor or held)
-        const { wrist } = this.getGripperPos();
-        if (this.holdingPackage) {
-            this.drawPackage(wrist.x - this.package.width / 2, wrist.y + 10);
-        } else {
-            this.drawPackage(this.package.x, this.package.y);
-
-            // Highlight if gripper is near
-            const near = Math.abs(wrist.x - (this.package.x + this.package.width/2)) < 40 &&
-                        Math.abs(wrist.y - this.package.y) < 50;
-            if (near) {
-                ctx.strokeStyle = '#f97316';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([5, 5]);
-                ctx.strokeRect(this.package.x - 5, this.package.y - 5,
-                              this.package.width + 10, this.package.height + 10);
-                ctx.setLineDash([]);
-            }
-        }
-
-        // Robot arm
-        this.drawRobot();
-
-        // UI
-        this.drawUI();
+    closeGripper() {
+        this.leftFinger.position.x = -0.02;
+        this.rightFinger.position.x = 0.02;
     }
 
-    drawConveyor() {
-        const ctx = this.ctx;
-        const y = this.height - 50;
-
-        // Conveyor frame
-        ctx.fillStyle = '#444';
-        ctx.fillRect(60, y - 55, 150, 10);
-
-        // Legs
-        ctx.fillStyle = '#333';
-        ctx.fillRect(70, y - 45, 8, 45);
-        ctx.fillRect(192, y - 45, 8, 45);
-
-        // Rollers
-        ctx.fillStyle = '#555';
-        for (let x = 85; x < 200; x += 25) {
-            ctx.beginPath();
-            ctx.arc(x, y - 50, 4, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        // Label
-        ctx.fillStyle = '#666';
-        ctx.font = '10px sans-serif';
-        ctx.fillText('CONVEYOR', 100, y - 62);
-    }
-
-    drawDropZone() {
-        const ctx = this.ctx;
-        const dz = this.dropZone;
-
-        // Bin
-        ctx.fillStyle = '#333';
-        ctx.fillRect(dz.x, dz.y, dz.width, dz.height);
-
-        // Inner
-        ctx.fillStyle = '#222';
-        ctx.fillRect(dz.x + 5, dz.y + 5, dz.width - 10, dz.height - 10);
-
-        // Dashed outline
-        ctx.strokeStyle = '#f97316';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.strokeRect(dz.x, dz.y, dz.width, dz.height);
-        ctx.setLineDash([]);
-
-        // Label
-        ctx.fillStyle = '#888';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('DROP', dz.x + dz.width / 2, dz.y + dz.height / 2 + 4);
-        ctx.textAlign = 'left';
-    }
-
-    drawPackage(x, y) {
-        const ctx = this.ctx;
-        const w = this.package.width;
-        const h = this.package.height;
-
-        // Shadow
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(x + 3, y + 3, w, h);
-
-        // Box body
-        ctx.fillStyle = '#c9956a';
-        ctx.fillRect(x, y, w, h);
-
-        // Highlight top
-        ctx.fillStyle = '#d4a574';
-        ctx.fillRect(x, y, w, 8);
-
-        // Tape cross
-        ctx.fillStyle = '#b8854a';
-        ctx.fillRect(x + w/2 - 4, y, 8, h);
-        ctx.fillRect(x, y + h/2 - 3, w, 6);
-
-        // Border
-        ctx.strokeStyle = '#a07040';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
-    }
-
-    drawRobot() {
-        const ctx = this.ctx;
-        const robot = this.robot;
-        const { elbow, wrist } = this.getGripperPos();
-
-        // Ceiling rail
-        ctx.fillStyle = '#444';
-        ctx.fillRect(50, 0, this.width - 100, 15);
-
-        // Rail details
-        ctx.fillStyle = '#555';
-        ctx.fillRect(50, 12, this.width - 100, 3);
-
-        // Vertical mount from ceiling
-        ctx.fillStyle = '#444';
-        ctx.fillRect(robot.baseX - 12, 0, 24, robot.baseY - 20);
-
-        // Mount connector
-        ctx.fillStyle = '#555';
-        ctx.fillRect(robot.baseX - 18, robot.baseY - 25, 36, 10);
-
-        // Shoulder mount
-        ctx.fillStyle = '#333';
-        ctx.beginPath();
-        ctx.arc(robot.baseX, robot.baseY, 25, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Upper arm
-        ctx.strokeStyle = '#444';
-        ctx.lineWidth = 20;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(robot.baseX, robot.baseY);
-        ctx.lineTo(elbow.x, elbow.y);
-        ctx.stroke();
-
-        // Arm highlight
-        ctx.strokeStyle = '#555';
-        ctx.lineWidth = 12;
-        ctx.beginPath();
-        ctx.moveTo(robot.baseX, robot.baseY);
-        ctx.lineTo(elbow.x, elbow.y);
-        ctx.stroke();
-
-        // Elbow joint
-        ctx.fillStyle = '#333';
-        ctx.beginPath();
-        ctx.arc(elbow.x, elbow.y, 15, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#f97316';
-        ctx.beginPath();
-        ctx.arc(elbow.x, elbow.y, 6, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Forearm
-        ctx.strokeStyle = '#444';
-        ctx.lineWidth = 16;
-        ctx.beginPath();
-        ctx.moveTo(elbow.x, elbow.y);
-        ctx.lineTo(wrist.x, wrist.y);
-        ctx.stroke();
-
-        ctx.strokeStyle = '#555';
-        ctx.lineWidth = 8;
-        ctx.beginPath();
-        ctx.moveTo(elbow.x, elbow.y);
-        ctx.lineTo(wrist.x, wrist.y);
-        ctx.stroke();
-
-        // Wrist
-        ctx.fillStyle = '#333';
-        ctx.beginPath();
-        ctx.arc(wrist.x, wrist.y, 10, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Gripper
-        ctx.fillStyle = '#444';
-        ctx.fillRect(wrist.x - 6, wrist.y, 12, 15);
-
-        // Gripper fingers
-        ctx.strokeStyle = '#555';
-        ctx.lineWidth = 4;
-        ctx.lineCap = 'round';
-
-        if (this.gripperOpen) {
-            ctx.beginPath();
-            ctx.moveTo(wrist.x - 4, wrist.y + 15);
-            ctx.lineTo(wrist.x - 12, wrist.y + 30);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(wrist.x + 4, wrist.y + 15);
-            ctx.lineTo(wrist.x + 12, wrist.y + 30);
-            ctx.stroke();
-        } else {
-            ctx.beginPath();
-            ctx.moveTo(wrist.x - 4, wrist.y + 15);
-            ctx.lineTo(wrist.x - 4, wrist.y + 30);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(wrist.x + 4, wrist.y + 15);
-            ctx.lineTo(wrist.x + 4, wrist.y + 30);
-            ctx.stroke();
-        }
-
-        // Shoulder joint accent
-        ctx.fillStyle = '#f97316';
-        ctx.beginPath();
-        ctx.arc(robot.baseX, robot.baseY, 8, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    drawUI() {
-        const ctx = this.ctx;
-
-        // Message
-        ctx.fillStyle = '#888';
-        ctx.font = '14px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(this.message, this.width / 2, 25);
-
-        // Score
-        if (this.packagesDelivered > 0) {
-            ctx.fillStyle = '#f97316';
-            ctx.font = 'bold 14px sans-serif';
-            ctx.textAlign = 'right';
-            ctx.fillText(`Delivered: ${this.packagesDelivered}  Score: ${this.score}`, this.width - 20, 25);
-        }
-
-        ctx.textAlign = 'left';
+    openGripper() {
+        this.leftFinger.position.x = -0.05;
+        this.rightFinger.position.x = 0.05;
     }
 
     animate() {
-        this.draw();
         requestAnimationFrame(() => this.animate());
+
+        // Subtle drop zone pulse
+        const pulse = Math.sin(Date.now() * 0.003) * 0.1 + 0.3;
+        this.dropZone.material.opacity = pulse;
+
+        // Update UI
+        this.messageSpan.textContent = this.message;
+        if (this.packagesDelivered > 0) {
+            this.scoreSpan.textContent = `Delivered: ${this.packagesDelivered}  Score: ${this.score}`;
+        }
+
+        this.renderer.render(this.scene, this.camera);
     }
 }
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    new TeleopGame('teleop-canvas');
+    // Load Three.js first
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+    script.onload = () => {
+        new TeleopGame3D('teleop-canvas');
+    };
+    document.head.appendChild(script);
 });
