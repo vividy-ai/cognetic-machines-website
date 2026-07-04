@@ -36,8 +36,8 @@ ${message || "No message provided"}
     `;
 
     await ses.send(new SendEmailCommand({
-      Source: "founders@cogneticmachines.com",  // Must be verified in SES
-      Destination: { ToAddresses: ["founders@cogneticmachines.com"] },
+      Source: "hello@cogneticmachines.com",  // Must be verified in SES
+      Destination: { ToAddresses: ["hello@cogneticmachines.com"] },
       ReplyToAddresses: [email],
       Message: {
         Subject: { Data: `New Lead: ${name}${company ? ` at ${company}` : ""}` },
